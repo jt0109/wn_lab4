@@ -114,7 +114,7 @@ void cZigduinoRadio::begin(channel_t chan, uint8_t* frameHeader)
 	radio_set_param(RP_CHANNEL(chan));
 	
 	// default to receiver
-	radio_set_state(STATE_RX);
+	radio_set_state(STATE_RXAUTO);
 	
 	#ifdef ENABLE_DIG3_DIG4
 	trx_bit_write(SR_PA_EXT_EN, 1);
@@ -354,16 +354,12 @@ void cZigduinoRadio::txFrame(uint8_t* frm, uint8_t len)
 	waitTxDone(0xFFFF);
 	#endif
 	txIsBusy = 1;
-	if(txTmpBuffer[0] & 0x20){
-		radio_set_state(STATE_TXAUTO);
-	}else{
-		radio_set_state(STATE_TX);
-	}
+	radio_set_state(STATE_TXAUTO);
 	ZR_RFTX_LED_ON();
 	radio_send_frame(len, frm, 0);
 	#ifdef ZR_TXWAIT_AFTER
 	waitTxDone(0xFFFF);
-	radio_set_state(STATE_RX);
+	radio_set_state(STATE_RXAUTO);
 	#endif
 	txIsBusy = 0;
 }
@@ -409,16 +405,12 @@ void cZigduinoRadio::endTransmission()
 	waitTxDone(0xFFFF);
 	#endif
 	txIsBusy = 1;
-	if(txTmpBuffer[0] & 0x20){
-		radio_set_state(STATE_TXAUTO);
-	}else{
-		radio_set_state(STATE_TX);
-	}
+	radio_set_state(STATE_TXAUTO);
 	ZR_RFTX_LED_ON();
 	radio_send_frame(txTmpBufferLength, txTmpBuffer, 0);
 	#ifdef ZR_TXWAIT_AFTER
 	waitTxDone(0xFFFF);
-	radio_set_state(STATE_RX);
+	radio_set_state(STATE_RXAUTO);
 	txIsBusy = 0;
 	#endif
 }
@@ -486,16 +478,12 @@ void cZigduinoRadio::write(uint8_t c)
 		waitTxDone(0xFFFF);
 		#endif
 		txIsBusy = 1;
-		if(txTmpBuffer[0] & 0x20){
-			radio_set_state(STATE_TXAUTO);
-		}else{
-			radio_set_state(STATE_TX);
-		}
+		radio_set_state(STATE_TXAUTO);
 		ZR_RFTX_LED_ON();
 		radio_send_frame(10, txTmpBuffer, 0);
 		#ifdef ZR_TXWAIT_AFTER
 		waitTxDone(0xFFFF);
-		radio_set_state(STATE_RX);
+		radio_set_state(STATE_RXAUTO);
 		txIsBusy = 0;
 		#endif
 	}
@@ -605,18 +593,18 @@ void cZigduinoRadio::setState(radio_state_t state)
 }
 
 /**
- * @brief radio_set_state to STATE_RX
+ * @brief radio_set_state to STATE_RXAUTO
  *
- * bring the the radio in the requested state of STATE_RX
+ * bring the the radio in the requested state of STATE_RXAUTO
  *
- * the radio state does not return to STATE_RX automatically if ZR_TXWAIT_AFTER is not used
+ * the radio state does not return to STATE_RXAUTO automatically if ZR_TXWAIT_AFTER is not used
  * thus why this is provided
  *
  * see radio.h for more info
  */
 void cZigduinoRadio::setStateRx()
 {
-	radio_set_state(STATE_RX);
+	radio_set_state(STATE_RXAUTO);
 }
 
 /**

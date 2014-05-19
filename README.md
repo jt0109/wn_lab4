@@ -44,5 +44,12 @@ JT: ... OK I really don't know what the fuck we're going to do about this.
 
 ====== Routing
 
-====== 
+CMY!!!!
+
+====== Ping Test
 	
+	
+*** Milestones
+-	one-to-one transmition under our designed MAC protocal
+-	Test on 4F using routing table and CSMA/CA
+-	
