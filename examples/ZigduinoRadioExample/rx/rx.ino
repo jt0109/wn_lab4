@@ -142,7 +142,7 @@ void init_header(){
  * Feel free to modify this function if needed.
  */
 uint8_t pkt_Tx(uint16_t dst_addr, char* msg){
-  uint16_t fcs;
+  uint16_t fcs,check_sum;
   uint8_t i;
   uint8_t pkt_len;
   uint8_t tmp_byte;
@@ -164,6 +164,15 @@ uint8_t pkt_Tx(uint16_t dst_addr, char* msg){
   // fill the software fcs
   if(TX_SOFT_FCS){
     fcs = cal_fcs(TxBuffer, pkt_len);
+    TxBuffer[pkt_len++] = fcs & 0xff;
+    TxBuffer[pkt_len++] = fcs >> 8;
+  }
+  // fill the check_sum in TX_CHECKSUM_POS
+  if(TX_SOFT_FCS){
+	if(pkt_len%2==1){
+		pkt_len ++;
+	}
+	check_sum = cal_check_sum(TxBuffer, pkt_len);
     TxBuffer[pkt_len++] = fcs & 0xff;
     TxBuffer[pkt_len++] = fcs >> 8;
   }
@@ -231,7 +240,11 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
   }
   // check fcs first, drop pkt if failed
   if(TX_SOFT_FCS){
-    fcs = cal_fcs(frm, len-2);
+	if(len%2 == 0){
+		fcs = cal_fcs(frm, len-2);
+	}else{
+		fcs = cal_fcs(frm, len-3);
+	}
     if(fcs != 0x0000){
       return RxBuffer;
     }
