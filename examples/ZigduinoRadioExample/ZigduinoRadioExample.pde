@@ -14,12 +14,12 @@ Watch the Rx Zigduino output what you've input into the serial port of the Tx Zi
 #define TX_SOFT_ACK 0   // only affect RX part(send ACK by hw/sw). TX still check ACK by  hardware in this code. modify libraries if necessary.
 #define TX_SOFT_FCS 1
 #define TX_RETRY 1      // pkt_Tx() retransmit packets if failed.
-#define TX_BACKOFF 100  // sleep time in ms
+#define TX_BACKOFF 100  // sleep time of tx retransmission, in ms
 #define TX_HEADER_LEN 9
 uint8_t TxBuffer[128]; // can be used as header and full pkt.
 uint8_t RxBuffer[128];
 uint8_t softACK[8];
-char teststr[] = "test ?";
+char teststr[] = "test x";
 
 uint8_t TX_available; // set to 1 if need a packet delivery, and use need_TX() to check  its value
 // here are internal variables, please do not modify them.
@@ -237,7 +237,7 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
     }
   }
   // check fcs first, drop pkt if failed
-  if(0){ //TX_SOFT_FCS){
+  if(TX_SOFT_FCS){
     fcs = cal_fcs(frm, len-2);
     if(fcs != 0x0000){
       fcs_failed = 1;
@@ -248,7 +248,7 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
     }
   }
   // send software ack
-  if(frm[0] & 0x20){
+  if(0){ // frm[0] & 0x20){
     softACK[2] = frm[2];
     ZigduinoRadio.txFrame(softACK, 5);
   }
