@@ -1,4 +1,4 @@
-/*
+/*	
 
 Run this sketch on two Zigduinos, open the serial monitor at 9600 baud, and type in stuff
 Watch the Rx Zigduino output what you've input into the serial port of the Tx Zigduino
