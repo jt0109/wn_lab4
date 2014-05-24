@@ -35,8 +35,8 @@ void setup()
   teststr[5] = '0' + NODE_ID;
   init_header();
   retry_c = 0;
-  TX_available = 0;
-  RX_available = 1;
+  TX_available = 1;
+  RX_available = 0;
   fcs_failed = 1;
   check_sum_failed= 1;
   ZigduinoRadio.begin(CHANNEL,TxBuffer);
