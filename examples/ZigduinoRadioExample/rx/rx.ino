@@ -4,7 +4,7 @@ Run this sketch on two Zigduinos, open the serial monitor at 9600 baud, and type
 Watch the Rx Zigduino output what you've input into the serial port of the Tx Zigduino
 
 */
-
+	
 #include <ZigduinoRadio.h>
 
 #define NODE_ID 0x0018  // node id of this node. change it with different boards
@@ -13,8 +13,9 @@ Watch the Rx Zigduino output what you've input into the serial port of the Tx Zi
 #define TX_DO_CARRIER_SENSE 1
 #define TX_SOFT_ACK 1   // only affect RX part(send ACK by hw/sw). TX still check ACK by  hardware in this code. modify libraries if necessary.
 #define TX_SOFT_FCS 1
+#define TX_CHECKSUM 1
 #define TX_RETRY 1      // pkt_Tx() retransmit packets if failed.
-#define TX_BACKOFF 100  // sleep time in ms
+#define TX_BACKOFF 100  // sleep time of tx retransmission, in ms
 #define TX_HEADER_LEN 9
 uint8_t TxBuffer[128]; // can be used as header and full pkt.
 uint8_t RxBuffer[128];
@@ -26,15 +27,18 @@ uint8_t TX_available; // set to 1 if need a packet delivery, and use need_TX() t
 uint8_t retry_c;
 uint8_t RX_available; // use has_RX() to check its value
 uint8_t RX_pkt_len;
+uint8_t fcs_failed,check_sum_failed;
 
 // the setup() function is called when Zigduino staets or reset
 void setup()
 {
-  teststr[3] = '0' + NODE_ID;
+  teststr[5] = '0' + NODE_ID;
   init_header();
   retry_c = 0;
-  TX_available = 0;
-  RX_available = 1;
+  TX_available = 1;
+  RX_available = 0;
+  fcs_failed = 1;
+  check_sum_failed= 1;
   ZigduinoRadio.begin(CHANNEL,TxBuffer);
   ZigduinoRadio.setParam(phyPanId,(uint16_t)0xABCD );
   ZigduinoRadio.setParam(phyShortAddr,(uint16_t)NODE_ID );
@@ -64,7 +68,7 @@ void loop()
 /** this is from the original example
  *  it reads bytes from your serial input, then transmit it
   if (Serial.available()){
-    ZigduinoRadio.beginTransmission();
+    ZigduinoRadio.beginTransmission();	
     Serial.println();
     Serial.print("Tx: ");
     while(Serial.available())
@@ -79,9 +83,13 @@ void loop()
     }
  */
 
-if(has_RX())
-  {
-    Serial.println();
+  if(has_RX()){
+	if(fcs_failed){
+      Serial.println();
+      Serial.print("FCS error");
+      Serial.println();
+    }else{
+      Serial.println();
     Serial.print("Rx: ");
     for(uint8_t i=0;i<RX_pkt_len;i++){
       inbyte = RxBuffer[i];
@@ -108,11 +116,12 @@ if(has_RX())
     Serial.print(ZigduinoRadio.getLastEd(), 10);
     Serial.println("dBm");
   }
+  }
   delay(100);
 }
 
 void init_header(){
-  if(TX_SOFT_ACK){
+  if(1){	//if(TX_SOFT_ACK){
     TxBuffer[0] = 0x61; // ack required
   }else{
     TxBuffer[0] = 0x41; // no ack required
@@ -168,7 +177,7 @@ uint8_t pkt_Tx(uint16_t dst_addr, char* msg){
     TxBuffer[pkt_len++] = fcs >> 8;
   }
   // fill the check_sum in TX_CHECKSUM_POS
-  if(TX_SOFT_FCS){
+  if(TX_CHECKSUM){
 	if(pkt_len%2==1){
 		pkt_len ++;
 	}
@@ -240,17 +249,31 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
   }
   // check fcs first, drop pkt if failed
   if(TX_SOFT_FCS){
-	if(len%2 == 0){
-		fcs = cal_fcs(frm, len-2);
-	}else{
-		fcs = cal_fcs(frm, len-3);
-	}
+    fcs = cal_fcs(frm, len-2);
     if(fcs != 0x0000){
+      fcs_failed = 1;
+      RX_available = 1;
       return RxBuffer;
+    }else{
+      fcs_failed = 0;
     }
   }
+  if(TX_CHECKSUM){
+	if(len%2 == 0){
+		check_sum = cal_check_sum(frm, len-2);
+	}else{
+		check_sum = cal_check_sum(frm, len-3);
+	}
+    if(check_sum!= 0x0000){
+		checksum_failed = 1;
+		RX_available = 1;
+      return RxBuffer;
+    }
+  }else{
+	check_sum_failed = 0;
+  }
   // send software ack
-  if(frm[0] & 0x20){
+  if(0){ // frm[0] & 0x20){
     softACK[2] = frm[2];
     ZigduinoRadio.txFrame(softACK, 5);
   }
