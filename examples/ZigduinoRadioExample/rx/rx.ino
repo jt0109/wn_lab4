@@ -7,7 +7,7 @@ Watch the Rx Zigduino output what you've input into the serial port of the Tx Zi
 	
 #include <ZigduinoRadio.h>
 
-#define NODE_ID 0x0018  // node id of this node. change it with different boards
+#define NODE_ID 0x0020  // node id of this node. change it with different boards
 #define CHANNEL 26      // check correspond frequency in SpectrumAnalyzer
 #define TX_TRY_TIMES 5  // if TX_RETRY is set, pkt_Tx() will try x times before success
 #define TX_DO_CARRIER_SENSE 1
@@ -58,7 +58,7 @@ void loop()
   uint8_t inhigh;
   uint8_t inlow;
   uint8_t tx_suc;
-
+  Serial.println("LOOP");
   if(need_TX()){
     delay(TX_BACKOFF);
     tx_suc = pkt_Tx(0x0001, teststr);
@@ -252,21 +252,22 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
   }
   // check fcs first, drop pkt if failed
   if(TX_SOFT_FCS){
-    fcs = cal_fcs(frm, len-2);
+    	if(len%2 == 0){
+		fcs = cal_fcs(frm, len-2);
+	}else{
+		fcs = cal_fcs(frm, len-3);
+	}
     if(fcs != 0x0000){
       fcs_failed = 1;
       RX_available = 1;
       return RxBuffer;
     }else{
       fcs_failed = 0;
+      Serial.println("FCS Success!!");
     }
   }
   if(TX_CHECKSUM){
-	if(len%2 == 0){
-		check_sum = cal_check_sum(frm, len-2);
-	}else{
-		check_sum = cal_check_sum(frm, len-3);
-	}
+		check_sum = cal_check_sum(frm, len);
     if(check_sum!= 0x0000){
 		Serial.println("Check_sum Failed!!");
 		check_sum_failed = 1;
