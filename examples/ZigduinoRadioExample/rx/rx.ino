@@ -20,7 +20,7 @@ Watch the Rx Zigduino output what you've input into the serial port of the Tx Zi
 uint8_t TxBuffer[128]; // can be used as header and full pkt.
 uint8_t RxBuffer[128];
 uint8_t softACK[8];
-char teststr[] = "TT ?";
+char teststr[] = "test x";
 
 uint8_t TX_available; // set to 1 if need a packet delivery, and use need_TX() to check  its value
 // here are internal variables, please do not modify them.
@@ -124,7 +124,7 @@ void loop()
 }
 
 void init_header(){
-  if(1){	//if(TX_SOFT_ACK){
+  if(1){ //TX_SOFT_ACK){
     TxBuffer[0] = 0x61; // ack required
   }else{
     TxBuffer[0] = 0x41; // no ack required

@@ -4,17 +4,18 @@ Run this sketch on two Zigduinos, open the serial monitor at 9600 baud, and type
 Watch the Rx Zigduino output what you've input into the serial port of the Tx Zigduino
 
 */
-
+	
 #include <ZigduinoRadio.h>
 
-#define NODE_ID 0x0018  // node id of this node. change it with different boards
+#define NODE_ID 0x0020  // node id of this node. change it with different boards
 #define CHANNEL 26      // check correspond frequency in SpectrumAnalyzer
 #define TX_TRY_TIMES 5  // if TX_RETRY is set, pkt_Tx() will try x times before success
 #define TX_DO_CARRIER_SENSE 1
 #define TX_SOFT_ACK 1   // only affect RX part(send ACK by hw/sw). TX still check ACK by  hardware in this code. modify libraries if necessary.
 #define TX_SOFT_FCS 1
+#define TX_CHECKSUM 1
 #define TX_RETRY 1      // pkt_Tx() retransmit packets if failed.
-#define TX_BACKOFF 100  // sleep time in ms
+#define TX_BACKOFF 100  // sleep time of tx retransmission, in ms
 #define TX_HEADER_LEN 9
 uint8_t TxBuffer[128]; // can be used as header and full pkt.
 uint8_t RxBuffer[128];
@@ -26,15 +27,18 @@ uint8_t TX_available; // set to 1 if need a packet delivery, and use need_TX() t
 uint8_t retry_c;
 uint8_t RX_available; // use has_RX() to check its value
 uint8_t RX_pkt_len;
+uint8_t fcs_failed,check_sum_failed;
 
 // the setup() function is called when Zigduino staets or reset
 void setup()
 {
-  teststr[3] = '0' + NODE_ID;
+  teststr[5] = '0' + NODE_ID;
   init_header();
   retry_c = 0;
-  TX_available = 0;
-  RX_available = 1;
+  TX_available = 1;
+  RX_available = 0;
+  fcs_failed = 1;
+  check_sum_failed= 1;
   ZigduinoRadio.begin(CHANNEL,TxBuffer);
   ZigduinoRadio.setParam(phyPanId,(uint16_t)0xABCD );
   ZigduinoRadio.setParam(phyShortAddr,(uint16_t)NODE_ID );
@@ -54,7 +58,7 @@ void loop()
   uint8_t inhigh;
   uint8_t inlow;
   uint8_t tx_suc;
-
+  Serial.println("LOOP");
   if(need_TX()){
     delay(TX_BACKOFF);
     tx_suc = pkt_Tx(0x0001, teststr);
@@ -64,7 +68,7 @@ void loop()
 /** this is from the original example
  *  it reads bytes from your serial input, then transmit it
   if (Serial.available()){
-    ZigduinoRadio.beginTransmission();
+    ZigduinoRadio.beginTransmission();	
     Serial.println();
     Serial.print("Tx: ");
     while(Serial.available())
@@ -75,21 +79,28 @@ void loop()
     }
     Serial.println();
     ZigduinoRadio.endTransmission((uint16_t)0x0001); //0xffff for broadcast
-
     }
- */
+	*/
 
-if(has_RX())
-  {
-    Serial.println();
-    Serial.print("Rx: ");
-    for(uint8_t i=0;i<RX_pkt_len;i++){
-      inbyte = RxBuffer[i];
-      if(printable(inbyte)){
-        Serial.write(inbyte);
-      }else{
-        Serial.print(".");
-      }
+  if(has_RX()){
+	if(fcs_failed){
+      Serial.println();
+      Serial.print("FCS error");
+      Serial.println();
+    }else if(check_sum_failed && TX_CHECKSUM){
+      Serial.println();
+      Serial.print("Check_sum error");
+      Serial.println();
+	}else{
+		Serial.println();
+		Serial.print("Rx: ");
+		for(uint8_t i=0;i<RX_pkt_len;i++){
+			inbyte = RxBuffer[i];
+			if(printable(inbyte)){
+				Serial.write(inbyte);
+			}else{
+				Serial.print(".");
+			}
       /* for printing bytes in hex
       Serial.print("[");
       inhigh = inbyte/16;
@@ -98,21 +109,22 @@ if(has_RX())
       Serial.write(inlow>9?'A'+inlow-10:'0'+inlow);
       Serial.print("] ");
       */
-    }
-    Serial.println();
-    Serial.print("LQI: ");
-    Serial.print(ZigduinoRadio.getLqi(), 10);
-    Serial.print(", RSSI: ");
-    Serial.print(ZigduinoRadio.getLastRssi(), 10);
-    Serial.print(" dBm, ED: ");
-    Serial.print(ZigduinoRadio.getLastEd(), 10);
-    Serial.println("dBm");
+		}
+		Serial.println();
+		Serial.print("LQI: ");
+		Serial.print(ZigduinoRadio.getLqi(), 10);
+		Serial.print(", RSSI: ");
+		Serial.print(ZigduinoRadio.getLastRssi(), 10);
+		Serial.print(" dBm, ED: ");
+		Serial.print(ZigduinoRadio.getLastEd(), 10);
+		Serial.println("dBm");
+	}
   }
   delay(100);
 }
 
 void init_header(){
-  if(TX_SOFT_ACK){
+  if(1){	//if(TX_SOFT_ACK){
     TxBuffer[0] = 0x61; // ack required
   }else{
     TxBuffer[0] = 0x41; // no ack required
@@ -142,7 +154,7 @@ void init_header(){
  * Feel free to modify this function if needed.
  */
 uint8_t pkt_Tx(uint16_t dst_addr, char* msg){
-  uint16_t fcs;
+  uint16_t fcs,check_sum;
   uint8_t i;
   uint8_t pkt_len;
   uint8_t tmp_byte;
@@ -164,6 +176,15 @@ uint8_t pkt_Tx(uint16_t dst_addr, char* msg){
   // fill the software fcs
   if(TX_SOFT_FCS){
     fcs = cal_fcs(TxBuffer, pkt_len);
+    TxBuffer[pkt_len++] = fcs & 0xff;
+    TxBuffer[pkt_len++] = fcs >> 8;
+  }
+  // fill the check_sum in TX_CHECKSUM_POS
+  if(TX_CHECKSUM){
+	if(pkt_len%2==1){
+		pkt_len ++;
+	}
+	check_sum = cal_check_sum(TxBuffer, pkt_len);
     TxBuffer[pkt_len++] = fcs & 0xff;
     TxBuffer[pkt_len++] = fcs >> 8;
   }
@@ -214,7 +235,7 @@ uint8_t pkt_Tx(uint16_t dst_addr, char* msg){
  * the crc_fail parameter is a fake, please ignore it
  */
 uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
-  uint16_t fcs;
+  uint16_t fcs,check_sum;
   // This function set RX_available = 1 at the end of this function.
   // You can use has_RX() to check if has packet received.
 
@@ -231,13 +252,34 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
   }
   // check fcs first, drop pkt if failed
   if(TX_SOFT_FCS){
-    fcs = cal_fcs(frm, len-2);
+    	if(len%2 == 0){
+		fcs = cal_fcs(frm, len-2);
+	}else{
+		fcs = cal_fcs(frm, len-3);
+	}
     if(fcs != 0x0000){
+      fcs_failed = 1;
+      RX_available = 1;
       return RxBuffer;
+    }else{
+      fcs_failed = 0;
+      Serial.println("FCS Success!!");
     }
   }
+  if(TX_CHECKSUM){
+		check_sum = cal_check_sum(frm, len);
+    if(check_sum!= 0x0000){
+		Serial.println("Check_sum Failed!!");
+		check_sum_failed = 1;
+		RX_available = 1;
+      return RxBuffer;
+    }else{
+		check_sum_failed = 0;
+		Serial.println("Check_sum Success!!");
+	}
+  }
   // send software ack
-  if(frm[0] & 0x20){
+  if(0){ // frm[0] & 0x20){
     softACK[2] = frm[2];
     ZigduinoRadio.txFrame(softACK, 5);
   }
@@ -277,6 +319,64 @@ uint16_t cal_fcs(uint8_t* frm, uint8_t len){
     fcs ^= frm[i];
   }
   return fcs;
+}
+// Check_sum 
+/*
+// Here's the code from CN of johntsai. lol
+short check_sum(int size,char* data){		 //1 or 0
+	char sum[2];
+	int some_int;
+	pkt pac;
+	memcpy(&pac, &data, size);
+	some_int = add_sum(size, data, sum);
+	if(strncmp(sum,pac.chk_sum,2))
+		return 0;
+	else
+		return some_int;
+}
+int add_sum(int size,char* data, char* dest){
+	int sum=0,new;
+	int i;
+	char buffer[4];
+	for(i=0;i<size;i+=2){
+		new=(int)(data[i]&0xFF);
+		new+=(int)(data[i+1]&0xFF)*256;
+		sum+=new;
+		memcpy(buffer,&sum,4);
+		while(buffer[2]==0x01){
+			sum-=256*256;
+			sum+=1;
+			memcpy(buffer,&sum,4);
+		}
+	}
+	memcpy(buffer,&sum,4);
+	dest[0]=~buffer[0];
+	dest[1]=~buffer[1];
+//	printf("%d %d\n",buffer[0]&0xFF,buffer[1]&0xFF);
+//	printf("%d\n",(buffer[0]&0xFF)&(buffer[1]&0xFF));
+	return (buffer[0]&0xFF)&(buffer[1]&0xFF)==255;
+}
+*/
+/** For TX: Call it to get check_sum byte[2]
+	For RX: Send all packets (as long as check_sum bytes) will return 0xff if the packet is not corrupted
+*/
+uint16_t cal_check_sum(uint8_t* frm, uint8_t len){
+  uint16_t sum = 0x00,to_add;
+  for(uint8_t i = 0; i < len; i += 2){
+	to_add = (uint16_t)frm[i];
+	if(i+1<len) 
+		to_add += (uint16_t)(frm[i+1]<<8);
+	sum = sum_two(sum,to_add);
+  }
+  return ~sum;	// return the one's complement, add it with the sum and get 0 if the packet is not corrupted
+}
+uint16_t sum_two(uint16_t a, uint16_t b){
+  uint32_t sum = (uint32_t)a + (uint32_t)b;
+  uint32_t carry = sum>>16;
+	if(carry == 0x01){			// case that there's carry bit
+		sum = sum_two(sum,carry); 
+	}
+  return (uint16_t) sum & 0xffff;
 }
 
 uint8_t printable(uint8_t in){
