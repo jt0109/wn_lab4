@@ -235,7 +235,7 @@ uint8_t pkt_Tx(uint16_t dst_addr, char* msg){
  * the crc_fail parameter is a fake, please ignore it
  */
 uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
-  uint16_t fcs;
+  uint16_t fcs,check_sum;
   // This function set RX_available = 1 at the end of this function.
   // You can use has_RX() to check if has packet received.
 
@@ -269,7 +269,7 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
 	}
     if(check_sum!= 0x0000){
 		Serial.println("Check_sum Failed!!");
-		checksum_failed = 1;
+		check_sum_failed = 1;
 		RX_available = 1;
       return RxBuffer;
     }else{
