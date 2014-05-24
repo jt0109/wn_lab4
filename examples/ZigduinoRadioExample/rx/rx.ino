@@ -264,22 +264,22 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
 			return RxBuffer;
 		}else{
 			fcs_failed = 0;
-			// Serial.println("FCS Success!!");
+			// Serial.println("FCS Success");
 		}
 	}
 	if(TX_CHECKSUM){
 		check_sum = cal_check_sum(frm, len-2);
 		if(check_sum!= 0x0000){
-			Serial.println("Check_sum Failed!!");
+			// Serial.println("Check_sum Failed");
 			check_sum_failed = 1;
 			RX_available = 1;
 			return RxBuffer;
 		}else{
 			check_sum_failed = 0;
-			// Serial.println("Check_sum Success!!");
+			// Serial.println("Check_sum Success");
 		}
 	}
-	Serial.println("GoodPacket!!!");
+	// Serial.println("GoodPacket");
 	// send software ack
 	if(0){ // frm[0] & 0x20){
 		softACK[2] = frm[2];
