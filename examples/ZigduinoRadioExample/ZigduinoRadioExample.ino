@@ -25,7 +25,7 @@ Watch the Rx Zigduino output what you've input into the serial port of the Tx Zi
 #define TX_STATUS_IDLE 0x01
 #define TX_STATUS_WAIT_CTS 0x02
 #define TX_STATUS_SEND_DATA 0x03
-#define CTS_TIME_LIMIT 100
+#define CTS_TIME_LIMIT 1000
 #define ERROR_TABLE_SIZE 10
 #define ROUTING_MAP_LEN 16
 #define ROUTING_MAP_START 10
@@ -105,7 +105,6 @@ void setup()
 	for(int i=0;i<ROUTING_MAP_LEN;i++){
 		routingMap[i] = 0xff;
 	}
-
 }
 
 // the function is always running
@@ -440,11 +439,7 @@ Serial.println(pktType);
 uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
 	uint16_t fcs,check_sum;
 
-	/** William added, for debug purpose */
-	RX_pkt_len = len;
-	for(uint8_t i=0; i < len; i++){
-		RxBuffer[i] = frm[i];
-	}
+
 	// This function set RX_available = 1 at the end of this function.
 	// You can use has_RX() to check if has packet received.
 
@@ -459,7 +454,6 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
 			return RxBuffer;
 		}
 	}
-
 	// check fcs first, drop pkt if failed
 	if(TX_SOFT_FCS){
 		if(len%2 == 0){
@@ -513,15 +507,13 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
 	//TODO: load routing map
 	if(frm[PACKET_TYPE_LOC] == 0x00){
 		for(int i = ROUTING_MAP_START;i<ROUTING_MAP_LEN;i++){
-			routingMap[i] = frm[i]; 
-			//TODO: if get correct packet, erase it from error vector
-			//and renew time info
-			for(int j =0;j<ERROR_TABLE_SIZE;j++){
-				if(frm[2] == errors[j][2])
-					errors[j][0] = 0xff;
-			}
-
-
+			routingMap[i] = frm[i];
+		}
+		//TODO: if get correct packet, erase it from error vector
+		//and renew time info
+		for(int j =0;j<ERROR_TABLE_SIZE;j++){
+			if(frm[2] == errors[j][2])
+			errors[j][0] = 0xff;
 		}
 	}
 	if(frm[PACKET_TYPE_LOC] == 0xff){
@@ -545,8 +537,8 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
 	}
 	else if(RxBuffer[PACKET_TYPE_LOC] == PACKET_TYPE_RTS) {
 		RTSaddr = 0;
-		uint16_t high = RxBuffer[7];
-		uint16_t low = RxBuffer[8];
+		uint16_t high = RxBuffer[8];
+		uint16_t low = RxBuffer[7];
 		RTSaddr |= high << 8;
 		RTSaddr |= low;
 		doRTS = 1;
@@ -633,8 +625,6 @@ uint8_t has_RX(){
 // calculate error detecting code
 // choose an algorithm for it
 uint16_t cal_fcs(uint8_t* frm, uint8_t len){
-	Serial.print("FCS Len: ");
-	Serial.println(len);
 	uint16_t fcs = frm[0];
 	for(uint8_t i = 1; i < len; i += 1){
 		fcs ^= frm[i];
