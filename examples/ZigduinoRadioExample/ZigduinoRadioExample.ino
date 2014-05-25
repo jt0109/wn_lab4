@@ -5,6 +5,8 @@ Watch the Rx Zigduino output what you've input into the serial port of the Tx Zi
 
 #include <ZigduinoRadio.h>
 #define NODE_ID 0x0001  // node id of this node. change it with different boards
+#define ALL_NODE_SRC 0x0001
+#define ALL_NODE_DEST 0x0002
 #define CHANNEL 26      // check correspond frequency in SpectrumAnalyzer
 #define TX_TRY_TIMES 5  // if TX_RETRY is set, pkt_Tx() will try x times before success
 #define TX_DO_CARRIER_SENSE 1
@@ -14,7 +16,7 @@ Watch the Rx Zigduino output what you've input into the serial port of the Tx Zi
 #define TX_RETRY 1     // pkt_Tx() retransmit packets if failed. TODO: Don't retry 
 #define TX_BACKOFF 100  // sleep time of tx retransmission, in ms
 #define TX_HEADER_LEN 10
-#define TX_INFO_LEN 22
+#define TX_INFO_LEN 20
 #define TX_CHECKSUM 1
 #define RETRY_INTERVAL 1
 #define PACKET_TYPE_DATA 0x00
@@ -48,15 +50,17 @@ uint8_t routingMap[ROUTING_MAP_LEN];
 int softErrorCounter = 0;
 uint8_t txStatus = TX_STATUS_IDLE;
 unsigned long RTSTime = 0;
+unsigned long timeTable[100];
 
 uint8_t errors[10][3]; 
 
 uint8_t seqCounter = 1;
 
-uint8_t timeTable[256];
-
 uint16_t RTSaddr;
 uint8_t doRTS = 0;
+
+uint8_t isPktArrived = 0;
+uint8_t isPingEnd = 0;
 
 unsigned long time;
 
@@ -114,6 +118,7 @@ void loop()
 	uint8_t inhigh;
 	uint8_t inlow;
 	uint8_t tx_suc;
+        int counter;
 	if(need_TX()){
 		if(txStatus == TX_STATUS_IDLE) {
 			int rssi = ZigduinoRadio.getRssiNow();
@@ -121,7 +126,7 @@ void loop()
 				//        Serial.print("Channel is clear now.");
 				txStatus = TX_STATUS_WAIT_CTS;
 				RTSTime = millis();
-				tx_suc = pkt_Tx(0x0002, teststr, 0, PACKET_TYPE_RTS, 0x01);
+				tx_suc = pkt_Tx(0x0002, teststr, 0, PACKET_TYPE_RTS, 0x00);
 			}
 			else {
 				Serial.print("Channel is too crowd.");
@@ -131,7 +136,7 @@ void loop()
 		else if(txStatus == TX_STATUS_SEND_DATA) {
 			Serial.println("DATA Sending");
 			delay(1000);
-			tx_suc = pkt_Tx(0x0002, teststr, seqCounter, PACKET_TYPE_DATA, 0x00);
+			tx_suc = pkt_Tx(0x0002, teststr, seqCounter, PACKET_TYPE_DATA, 0x01);
 			seqCounter++;
 			txStatus = TX_STATUS_IDLE;
 		}
@@ -194,6 +199,7 @@ void loop()
 			Serial.println();
 		}
 		else{
+                        
 			Serial.println();
 			Serial.print("Rx: ");
 			for(uint8_t i=0;i<RX_pkt_len;i++){
@@ -230,6 +236,60 @@ void loop()
 
 
 		}
+	}
+	if(isPktArrived) {
+          delay(100);
+	  isPktArrived = 0;
+	  // Return all info to source
+	  for(int i=0; i<ROUTING_MAP_LEN; i++) {
+		TxBuffer[i+ROUTING_MAP_START] = 0xff;
+	  }
+	  char routingMsg[ROUTING_MAP_LEN+1];
+	  for(counter = 0;counter < ROUTING_MAP_LEN;counter++){
+		routingMsg[counter] = (char)RxBuffer[ROUTING_MAP_START+counter];
+	  }
+	  
+	  routingMsg[counter]='\0';
+	  Serial.print("SENDING ACK");
+	  Serial.println(routingMsg);
+	  //NEED GET RX
+	  pkt_Tx(ALL_NODE_SRC, routingMsg, RxBuffer[2], PACKET_TYPE_DATA, 0x00);
+	  //tx_suc = pkt_Tx(RTSaddr, teststr, 0, PACKET_TYPE_CTS, 0x00);
+	}
+	if(isPingEnd) {
+          delay(100);
+  	  isPingEnd = 0;
+          Serial.println("-----------------Ping Result--------------");
+	  Serial.print("Time: ");
+	  Serial.print(millis()-timeTable[RxBuffer[2]]);
+          Serial.println(" ms");
+          /*
+          Serial.print("Head:");
+          Serial.println(TX_HEADER_LEN + TX_INFO_LEN + 1);
+          Serial.print("Tail:");
+          Serial.println(RX_pkt_len);          
+          */
+	  Serial.print("Path: ");
+          Serial.print(NODE_ID, HEX);
+	  for(int i = TX_HEADER_LEN + TX_INFO_LEN;i<RX_pkt_len;i++){
+		inbyte = RxBuffer[i];
+		if(inbyte == 0xff)
+		  break;
+                Serial.print("->");
+		Serial.print(inbyte, HEX);
+	  }
+          Serial.println();
+          Serial.println("-----------------Ping Result End--------------");
+          /*
+	  for(int i = ROUTING_MAP_START;i<ROUTING_MAP_START + ROUTING_MAP_LEN;i++){
+		inbyte = RxBuffer[i];
+		if(inbyte == 0xff)
+		  break;
+		Serial.write(inbyte);
+	  }
+          */
+	  
+	  // Return all info to source
 	}
 	//TODO
 	softErrorCounter++;
@@ -286,14 +346,14 @@ void init_header(){
 * Feel free to modify this function if needed.
 */
 
-uint8_t pkt_Tx(uint16_t dst_addr, char* msg, uint8_t seqNum, uint8_t pktType, uint8_t needTime){
+uint8_t pkt_Tx(uint16_t dst_addr, char* msg, uint8_t seqNum, uint8_t pktType, uint8_t ifRetry){
 	uint16_t fcs,check_sum;
 	uint8_t i;
 	uint8_t pkt_len;
 	uint8_t tmp_byte;
 	radio_cca_t cca = RADIO_CCA_FREE;
 	int8_t rssi;
-
+        //Serial.println("TX!!!!!!!!");
 	// process the dst addr, 0xffff for broadcast
 	TxBuffer[5] = dst_addr & 0x00ff;
 	TxBuffer[6] = dst_addr >> 8;
@@ -302,21 +362,17 @@ uint8_t pkt_Tx(uint16_t dst_addr, char* msg, uint8_t seqNum, uint8_t pktType, ui
 		TxBuffer[0] = 0x41;
 	}
 	TxBuffer[2] = seqNum;
+        timeTable[seqNum] = millis();
 	TxBuffer[PACKET_TYPE_LOC] = pktType;
 
 	if(pktType == PACKET_TYPE_DATA) {
 		// Serial.println("Routeing code");
 		// delay(1000);
-		for(i = 0;i<ROUTING_MAP_LEN;i++){
-			TxBuffer[i+ROUTING_MAP_START] = routingMap[i];
-		}
-		if(needTime == 0x01){
-			time = millis();
-			TxBuffer[TIME_START] = time >> 24;
-			TxBuffer[TIME_START+1] = (time >> 16) & 0x000000ff;
-			TxBuffer[TIME_START+2] = (time >> 8) & 0x000000ff;
-			TxBuffer[TIME_START+3] = time & 0x000000ff;
-		}
+                if(ifRetry == 0x01){
+          		for(i = 0;i<ROUTING_MAP_LEN;i++){
+          			TxBuffer[i+ROUTING_MAP_START] = routingMap[i];
+          		}
+                }
 
 		// fill the payload
 		for(i = 0; msg[i] != '\0'; i++){
@@ -454,6 +510,14 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
 			return RxBuffer;
 		}
 	}
+        else {
+          if( NODE_ID == ALL_NODE_SRC && frm[9] == PACKET_TYPE_DATA) {
+             isPingEnd = 1;
+          }
+          else if (NODE_ID == ALL_NODE_DEST && frm[9] == PACKET_TYPE_DATA) {
+             isPktArrived = 1;
+          }
+        }
 	// check fcs first, drop pkt if failed
 	if(TX_SOFT_FCS){
 		if(len%2 == 0){
@@ -505,9 +569,15 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
 	}
 
 	//TODO: load routing map
-	if(frm[PACKET_TYPE_LOC] == 0x00){
+	if(frm[PACKET_TYPE_LOC] == PACKET_TYPE_DATA){
 		for(int i = ROUTING_MAP_START;i<ROUTING_MAP_LEN;i++){
 			routingMap[i] = frm[i];
+		}
+                for(int i = ROUTING_MAP_START ;i<ROUTING_MAP_START+ROUTING_MAP_LEN;i++){
+			if(frm[i] == 0xff){
+				frm[i] = NODE_ID & 0xff;
+				break;
+			}
 		}
 		//TODO: if get correct packet, erase it from error vector
 		//and renew time info
@@ -516,9 +586,9 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
 			errors[j][0] = 0xff;
 		}
 	}
-	if(frm[PACKET_TYPE_LOC] == 0xff){
+	if(frm[PACKET_TYPE_LOC] == PACKET_TYPE_SOFTERR){
 		if(need_TX()){
-			pkt_Tx(((uint16_t)frm[8] << 8) | frm[7], teststr, frm[2], PACKET_TYPE_SOFTERR, 0x00);
+			pkt_Tx(((uint16_t)frm[8] << 8) | frm[7], teststr, frm[2], PACKET_TYPE_SOFTERR, 0x01);
 			TX_available = 1;
 		}
 	}
@@ -546,12 +616,7 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
 	}
 
 	if(len >= TX_HEADER_LEN+TX_INFO_LEN){//TODO: forwarding
-		for(int i = ROUTING_MAP_START ;i<ROUTING_MAP_START+ROUTING_MAP_LEN;i++){
-			if(frm[i] == 0xff){
-				frm[i] = NODE_ID & 0xff;
-				break;
-			}
-		}
+		
 	}
 
 	// send software ack
@@ -678,5 +743,6 @@ uint16_t sum_two(uint16_t a, uint16_t b){
 	}
 	return (uint16_t) sum & 0xffff;
 }
+
 
 
