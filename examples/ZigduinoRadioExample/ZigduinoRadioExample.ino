@@ -1,27 +1,27 @@
 /*
-
 Run this sketch on two Zigduinos, open the serial monitor at 9600 baud, and type in stuff
-Watch the Rx Zigduino output what you've input into the serial port of the Tx Zigduino
-
-*/
+ Watch the Rx Zigduino output what you've input into the serial port of the Tx Zigduino
+ */
 
 #include <ZigduinoRadio.h>
 #define NODE_ID 0x0001  // node id of this node. change it with different boards
 #define CHANNEL 26      // check correspond frequency in SpectrumAnalyzer
 #define TX_TRY_TIMES 5  // if TX_RETRY is set, pkt_Tx() will try x times before success
 #define TX_DO_CARRIER_SENSE 1
-#define TX_SOFT_ACK 0   // only affect RX part(send ACK by hw/sw). TX still check ACK by  hardware in this code. modify libraries if necessary.
+#define TX_SOFT_ACK 1
 #define TX_SOFT_FCS 1
+#define TX_CHECKSUM 1
 #define TX_RETRY 1     // pkt_Tx() retransmit packets if failed. TODO: Don't retry 
 #define TX_BACKOFF 100  // sleep time of tx retransmission, in ms
-#define TX_HEADER_LEN 9
-#define TX_INFO_LEN 23
+#define TX_HEADER_LEN 10
+#define TX_INFO_LEN 22
 #define TX_CHECKSUM 1
 #define RETRY_INTERVAL 1
 #define PACKET_TYPE_DATA 0x00
 #define PACKET_TYPE_SOFTERR 0xff
 #define PACKET_TYPE_RTS 0x10
 #define PACKET_TYPE_CTS 0x11
+#define PACKET_TYPE_UNDEFINED 0xaa
 #define TX_STATUS_IDLE 0x01
 #define TX_STATUS_WAIT_CTS 0x02
 #define TX_STATUS_SEND_DATA 0x03
@@ -55,25 +55,28 @@ uint8_t seqCounter = 1;
 
 uint8_t timeTable[256];
 
+uint16_t RTSaddr;
+uint8_t doRTS = 0;
+
 unsigned long time;
 
 class softError{
-  public:
-    softError(uint16_t _add, uint8_t _seq){
-      address = _add;
-      seqNum = _seq;
-    }
+public:
+  softError(uint16_t _add, uint8_t _seq){
+    address = _add;
+    seqNum = _seq;
+  }
 
-    uint16_t getAddr(){
-      return address;
-    }
+  uint16_t getAddr(){
+    return address;
+  }
 
-    uint8_t getSeq(){
-      return seqNum;
-    }
-  private:
-    uint16_t address;
-    uint8_t seqNum;
+  uint8_t getSeq(){
+    return seqNum;
+  }
+private:
+  uint16_t address;
+  uint8_t seqNum;
 };
 //Error class
 
@@ -98,11 +101,11 @@ void setup()
   ZigduinoRadio.attachError(errHandle);
   ZigduinoRadio.attachTxDone(onXmitDone);
   ZigduinoRadio.attachReceiveFrame(pkt_Rx);
-  
+
   for(int i=0;i<ROUTING_MAP_LEN;i++){
     routingMap[i] = 0xff;
   }
-  
+
 }
 
 // the function is always running
@@ -116,8 +119,8 @@ void loop()
     if(txStatus == TX_STATUS_IDLE) {
       int rssi = ZigduinoRadio.getRssiNow();
       if(rssi == -91) {
-//        Serial.print("Channel is clear now.");
-	txStatus = TX_STATUS_WAIT_CTS;
+        //        Serial.print("Channel is clear now.");
+        txStatus = TX_STATUS_WAIT_CTS;
         RTSTime = millis();
         tx_suc = pkt_Tx(0x0002, teststr, 0, PACKET_TYPE_RTS, 0x01);
       }
@@ -127,6 +130,8 @@ void loop()
       }
     }
     else if(txStatus == TX_STATUS_SEND_DATA) {
+      Serial.println("DATA Sending");
+      delay(1000);
       tx_suc = pkt_Tx(0x0002, teststr, seqCounter, PACKET_TYPE_DATA, 0x00);
       seqCounter++;
       txStatus = TX_STATUS_IDLE;
@@ -134,72 +139,86 @@ void loop()
     TX_available = 1;
   }
 
-/** this is from the original example
- *  it reads bytes from your serial input, then transmit it
-  if (Serial.available()){
-    ZigduinoRadio.beginTransmission();
-    Serial.println();
-    Serial.print("Tx: ");
-    while(Serial.available())
-    {
-      char c = Serial.read();
-      Serial.write(c);
-      ZigduinoRadio.write(c);
-    }
-    Serial.println();
-    ZigduinoRadio.endTransmission((uint16_t)0x0001); //0xffff for broadcast
+  /** this is from the original example
+   *  it reads bytes from your serial input, then transmit it
+   * if (Serial.available()){
+   * ZigduinoRadio.beginTransmission();
+   * Serial.println();
+   * Serial.print("Tx: ");
+   * while(Serial.available())
+   * {
+   * char c = Serial.read();
+   * Serial.write(c);
+   * ZigduinoRadio.write(c);
+   * }
+   * Serial.println();
+   * ZigduinoRadio.endTransmission((uint16_t)0x0001); //0xffff for broadcast
+   * 
+   * }
+   */
 
+  /** William Added, to handle if cannot get CTS */
+  if(txStatus == TX_STATUS_WAIT_CTS) {
+    //      Serial.println("Waiting for CTS");
+    int time = calcWaitingTime();
+    //      Serial.print("time: ");
+    //      Serial.println(time);
+    if(time > CTS_TIME_LIMIT) {
+      txStatus = TX_STATUS_IDLE;
+      delay(random(50, 150));
     }
- */
-
-    /** William Added, to handle if cannot get CTS */
-    if(txStatus == TX_STATUS_WAIT_CTS) {
-//      Serial.println("Waiting for CTS");
-      int time = calcWaitingTime();
-//      Serial.print("time: ");
-//      Serial.println(time);
-      if(time > CTS_TIME_LIMIT) {
-        txStatus = TX_STATUS_IDLE;
-        delay(random(50, 150));
-      }
-    }
+  }
+  
+  if(doRTS) {
+    tx_suc = pkt_Tx(RTSaddr, teststr, 0, PACKET_TYPE_CTS, 0x00);
+    doRTS = 0;
+  }
 
   if(has_RX()){
     Serial.println("Rx packet info");  
     for(uint8_t i=0;i<RX_pkt_len;i++){
-       Serial.print("Rx[");
-       Serial.print(i);
-       Serial.print("]: ");
-       Serial.println(RxBuffer[i], HEX);
+      Serial.print("Rx[");
+      Serial.print(i);
+      Serial.print("]: ");
+      Serial.println(RxBuffer[i], HEX);
     }
-    
+
+
     if(fcs_failed){
       Serial.println();
       Serial.print("FCS error");
       Serial.println();
-    }else{
+    }
+    else if(check_sum_failed && TX_CHECKSUM){
+      Serial.println();
+      Serial.print("Check_sum error");
+      Serial.println();
+    }
+    else{
       Serial.println();
       Serial.print("Rx: ");
       for(uint8_t i=0;i<RX_pkt_len;i++){
         inbyte = RxBuffer[i];
         if(printable(inbyte)){
           Serial.write(inbyte);
-        }else if(check_sum_failed && TX_CHECKSUM){
+        }
+        else if(check_sum_failed && TX_CHECKSUM){
           Serial.println();
           Serial.print("Check_sum error");
           Serial.println();
-        }else{
+        }
+        else{
           Serial.print(".");
         }
 
         /* for printing bytes in hex
-        Serial.print("[");
-        inhigh = inbyte/16;
-        inlow = inbyte%16;
-        Serial.write(inhigh>9?'A'+inhigh-10:'0'+inhigh);
-        Serial.write(inlow>9?'A'+inlow-10:'0'+inlow);
-        Serial.print("] ");
-        */
+         Serial.print("[");
+         inhigh = inbyte/16;
+         inlow = inbyte%16;
+         Serial.write(inhigh>9?'A'+inhigh-10:'0'+inhigh);
+         Serial.write(inlow>9?'A'+inlow-10:'0'+inlow);
+         Serial.print("] ");
+         */
       }
       Serial.println();
       Serial.print("LQI: ");
@@ -209,8 +228,8 @@ void loop()
       Serial.print(" dBm, ED: ");
       Serial.print(ZigduinoRadio.getLastEd(), 10);
       Serial.println("dBm");
-      
-      
+
+
     }
   }
   //TODO
@@ -225,7 +244,8 @@ void loop()
 void init_header(){
   if(1){ //TX_SOFT_ACK){
     TxBuffer[0] = 0x61; // ack required
-  }else{
+  }
+  else{
     TxBuffer[0] = 0x41; // no ack required
   }
   TxBuffer[1] = 0x88;
@@ -236,7 +256,8 @@ void init_header(){
   TxBuffer[6] = 0x00; //dest address hight byte
   TxBuffer[7] = NODE_ID & 0xff; //source address low byte
   TxBuffer[8] = NODE_ID >> 8; //source address hight byre
-  TxBuffer[PACKET_TYPE_LOC] = PACKET_TYPE_DATA;
+  // TxBuffer[PACKET_TYPE_LOC] = PACKET_TYPE_DATA;
+  TxBuffer[PACKET_TYPE_LOC] = PACKET_TYPE_UNDEFINED;
 
   softACK[0] = 0x42;
   softACK[1] = 0x88;
@@ -282,43 +303,54 @@ uint8_t pkt_Tx(uint16_t dst_addr, char* msg, uint8_t seqNum, uint8_t pktType, ui
     TxBuffer[0] = 0x41;
   }
   TxBuffer[2] = seqNum;
- 
-  for(i = 0;i<ROUTING_MAP_LEN;i++){
-    TxBuffer[i+ROUTING_MAP_START] = routingMap[i];
-  }
-  if(needTime == 0x01){
-    time = millis();
-    TxBuffer[TIME_START] = time >> 24;
-    TxBuffer[TIME_START+1] = (time >> 16) & 0x000000ff;
-    TxBuffer[TIME_START+2] = (time >> 8) & 0x000000ff;
-    TxBuffer[TIME_START+3] = time & 0x000000ff;
-  }
-
   TxBuffer[PACKET_TYPE_LOC] = pktType;
-/*
-  Serial.println("");
-  Serial.print("pktType: ");
-  Serial.println(pktType);
-*/
 
-  // fill the payload
-  for(i = 0; msg[i] != '\0'; i++){
-    TxBuffer[TX_HEADER_LEN + TX_INFO_LEN + i] = msg[i];
+  if(pktType == PACKET_TYPE_DATA) {
+    // Serial.println("Routeing code");
+    // delay(1000);
+    for(i = 0;i<ROUTING_MAP_LEN;i++){
+      TxBuffer[i+ROUTING_MAP_START] = routingMap[i];
+    }
+    if(needTime == 0x01){
+      time = millis();
+      TxBuffer[TIME_START] = time >> 24;
+      TxBuffer[TIME_START+1] = (time >> 16) & 0x000000ff;
+      TxBuffer[TIME_START+2] = (time >> 8) & 0x000000ff;
+      TxBuffer[TIME_START+3] = time & 0x000000ff;
+    }
+
+    // fill the payload
+    for(i = 0; msg[i] != '\0'; i++){
+      TxBuffer[TX_HEADER_LEN + TX_INFO_LEN + i] = msg[i];
+    }
+    pkt_len = TX_HEADER_LEN + TX_INFO_LEN + i;
   }
-  pkt_len = TX_HEADER_LEN + TX_INFO_LEN + i;
+  else {
+    pkt_len = TX_HEADER_LEN;
+  }
+
+
+  /*
+  Serial.println("");
+   Serial.print("pktType: ");
+   Serial.println(pktType);
+   */
+
+
   // fill the software fcs
   if(TX_SOFT_FCS){
     fcs = cal_fcs(TxBuffer, pkt_len);
     TxBuffer[pkt_len++] = fcs & 0xff;
     TxBuffer[pkt_len++] = fcs >> 8;
   }
+  // fill the check_sum in TX_CHECKSUM_POS
   if(TX_CHECKSUM){
     if(pkt_len%2==1){
       pkt_len ++;
     }
     check_sum = cal_check_sum(TxBuffer, pkt_len);
-    TxBuffer[pkt_len++] = fcs & 0xff;
-    TxBuffer[pkt_len++] = fcs >> 8;
+    TxBuffer[pkt_len++] = check_sum & 0xff;
+    TxBuffer[pkt_len++] = check_sum >> 8;
   }
   // hardware fcs, no use
   pkt_len += 2;
@@ -327,56 +359,76 @@ uint8_t pkt_Tx(uint16_t dst_addr, char* msg, uint8_t seqNum, uint8_t pktType, ui
   if(TX_RETRY){
     for(retry_c = 0; retry_c < TX_TRY_TIMES; retry_c++){
       if(TX_DO_CARRIER_SENSE){
-//        cca = ZigduinoRadio.doCca();
+        //        cca = ZigduinoRadio.doCca();
         rssi = ZigduinoRadio.getRssiNow();
-//        if(cca == RADIO_CCA_FREE)
+        //        if(cca == RADIO_CCA_FREE)
         if(rssi == -91){
           ZigduinoRadio.txFrame(TxBuffer, pkt_len);
-          
-            Serial.println();  
-            for(i=0; i<pkt_len; i++) {
-               Serial.print("Tx[");
-               Serial.print(i);
-               Serial.print("]: ");
-               Serial.println(TxBuffer[i], HEX);
-            }
-            delay(999999);
-        }else{
+
+          Serial.println();  
+          for(i=0; i<pkt_len; i++) {
+            Serial.print("Tx[");
+            Serial.print(i);
+            Serial.print("]: ");
+            Serial.println(TxBuffer[i], HEX);
+          }
+          // delay(999999);
+        }
+        else{
           Serial.print("ca fail with rssi = ");
           Serial.println(rssi);
         }
-      }else{
+      }
+      else{
         ZigduinoRadio.txFrame(TxBuffer, pkt_len);
-        
-          Serial.println();  
-          for(i=0; i<pkt_len; i++) {
-             Serial.print("Tx[");
-             Serial.print(i);
-             Serial.print("]: ");
-             Serial.println(TxBuffer[i], HEX);
-          }
-          delay(999999);
+
+        Serial.println();  
+        for(i=0; i<pkt_len; i++) {
+          Serial.print("Tx[");
+          Serial.print(i);
+          Serial.print("]: ");
+          Serial.println(TxBuffer[i], HEX);
+        }
+        // delay(999999);
       }
       delay(TX_BACKOFF);
     }
     retry_c--; // extra 1 by for loop, if tx success retry_c == TX_TRY_TIMES
-  }else{
+  }
+  else{
     if(TX_DO_CARRIER_SENSE){
-//      cca = ZigduinoRadio.doCca();
+      //      cca = ZigduinoRadio.doCca();
       rssi = ZigduinoRadio.getRssiNow();
-//      if(cca == RADIO_CCA_FREE)
+      //      if(cca == RADIO_CCA_FREE)
       if(rssi == -91){
         ZigduinoRadio.txFrame(TxBuffer, pkt_len);
-      }else{
+        Serial.println();  
+        for(i=0; i<pkt_len; i++) {
+          Serial.print("Tx[");
+          Serial.print(i);
+          Serial.print("]: ");
+          Serial.println(TxBuffer[i], HEX);
+        }
+
+      }
+      else{
         Serial.print("ca fail with rssi = ");
         Serial.println(rssi);
       }
-    }else{
+    }
+    else{
       ZigduinoRadio.txFrame(TxBuffer, pkt_len);
+      Serial.println();  
+      for(i=0; i<pkt_len; i++) {
+        Serial.print("Tx[");
+        Serial.print(i);
+        Serial.print("]: ");
+        Serial.println(TxBuffer[i], HEX);
+      }
     }
   }
   TxBuffer[0] = tmp_byte;
-  
+
   return retry_c == TX_TRY_TIMES;
 }
 
@@ -386,8 +438,8 @@ uint8_t pkt_Tx(uint16_t dst_addr, char* msg, uint8_t seqNum, uint8_t pktType, ui
  * the crc_fail parameter is a fake, please ignore it
  */
 uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
-  uint16_t fcs,check_sum;;
-  
+  uint16_t fcs,check_sum;
+
   /** William added, for debug purpose */
   RX_pkt_len = len;
   for(uint8_t i=0; i < len; i++){
@@ -411,7 +463,13 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
 
   // check fcs first, drop pkt if failed
   if(TX_SOFT_FCS){
-    fcs = (frm, len-2);
+    if(len%2 == 0){
+      fcs = cal_fcs(frm, len-4);
+    }
+    else{
+      fcs = cal_fcs(frm, len-5);
+    }
+
     //TODO: add checksum
     if(fcs != 0x0000){
       fcs_failed = 1;
@@ -427,35 +485,37 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
       //errors.add(new errors(((uint16_t)frm[6] << 8) | frm[5]), frm[2]);
 
       return RxBuffer;
-    }else{
+    }
+    else{
       fcs_failed = 0;
     }
   }
   if(TX_CHECKSUM){
-      check_sum = cal_check_sum(frm, len);
-      if(check_sum!= 0x0000){
-        Serial.println("Check_sum Failed!!");
-        check_sum_failed = 1;
-        RX_available = 1;
-        for(int i = 0;i<ERROR_TABLE_SIZE;i++){
-          if(errors[i][0] == 0xff){
-            errors[i][0] = frm[5];
-            errors[i][1] = frm[6];
-            errors[i][2] = frm[2];
-          }
+    check_sum = cal_check_sum(frm, len-2);
+    if(check_sum!= 0x0000){
+      //Serial.println("Check_sum Failed");
+      check_sum_failed = 1;
+      RX_available = 1;
+      for(int i = 0;i<ERROR_TABLE_SIZE;i++){
+        if(errors[i][0] == 0xff){
+          errors[i][0] = frm[5];
+          errors[i][1] = frm[6];
+          errors[i][2] = frm[2];
         }
-        return RxBuffer;
-      }else{
+      }
+      return RxBuffer;
+    }
+    else{
       check_sum_failed = 0;
-      Serial.println("Check_sum Success!!");
+      //Serial.println("Check_sum Success");
     }
   }
-  
+
   //TODO: load routing map
-  if(frm[PACKET_TYPE_LOC] = 0x00){
+  if(frm[PACKET_TYPE_LOC] == 0x00){
     for(int i = ROUTING_MAP_START;i<ROUTING_MAP_LEN;i++){
       routingMap[i] = frm[i]; 
-      
+
     }
   }
   if(frm[PACKET_TYPE_LOC] == 0xff){
@@ -478,14 +538,15 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
     }
   }
   else if(RxBuffer[PACKET_TYPE_LOC] == PACKET_TYPE_RTS) {
-    uint16_t addr = 0;
+    RTSaddr = 0;
     uint16_t high = RxBuffer[7];
     uint16_t low = RxBuffer[8];
-    addr += high << 8;
-    addr += low;
-    pkt_Tx(addr, teststr, 0, PACKET_TYPE_CTS, 0x00);
+    RTSaddr |= high << 8;
+    RTSaddr |= low;
+    doRTS = 1;
+    //pkt_Tx(addr, teststr, 0, PACKET_TYPE_CTS, 0x00);
   }
-  
+
   if(len >= TX_HEADER_LEN+TX_INFO_LEN){//TODO: forwarding
     for(int i = ROUTING_MAP_START ;i<ROUTING_MAP_START+ROUTING_MAP_LEN;i++){
       if(frm[i] == 0xff){
@@ -494,14 +555,14 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
       }
     }
   }
-  
+
   // send software ack
   if(0){ // frm[0] & 0x20){
     softACK[2] = frm[2];
     ZigduinoRadio.txFrame(softACK, 5);
   }
-    //TODO: if get correct packet, erase it from error vector
-    //and renew time info
+  //TODO: if get correct packet, erase it from error vector
+  //and renew time info
   for(int j =0;j<ERROR_TABLE_SIZE;j++){
     if(frm[2] == errors[j][2])
       errors[j][0] = 0xff;
@@ -514,7 +575,7 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
 
   RX_pkt_len = len;
   RX_available = 1;
-  
+
   return RxBuffer;
 }
 
@@ -522,7 +583,7 @@ uint8_t* pkt_Rx(uint8_t len, uint8_t* frm, uint8_t lqi, uint8_t crc_fail){
 int sendSoftError(){
   for(int i = 0;i<ERROR_TABLE_SIZE;i++){
     if(errors[i][2] != 0xff)
-       continue;
+      continue;
     softError[2] = errors[i][2];
     softError[5] = errors[i][0];
     softError[6] = errors[i][1];
@@ -536,10 +597,10 @@ int sendSoftError(){
 uint16_t cal_check_sum(uint8_t* frm, uint8_t len){
   uint16_t sum = 0x00,to_add;
   for(uint8_t i = 0; i < len; i += 2){
-  to_add = (uint16_t)frm[i];
-  if(i+1<len) 
-    to_add += (uint16_t)(frm[i+1]<<8);
-  sum = sum_two(sum,to_add);
+    to_add = (uint16_t)frm[i];
+    if(i+1<len) 
+      to_add += (uint16_t)(frm[i+1]<<8);
+    sum = sum_two(sum,to_add);
   }
   return ~sum;  // return the one's complement, add it with the sum and get 0 if the packet is not corrupted
 }
@@ -566,6 +627,8 @@ uint8_t has_RX(){
 // calculate error detecting code
 // choose an algorithm for it
 uint16_t cal_fcs(uint8_t* frm, uint8_t len){
+  Serial.print("FCS Len: ");
+  Serial.println(len);
   uint16_t fcs = frm[0];
   for(uint8_t i = 1; i < len; i += 1){
     fcs ^= frm[i];
@@ -596,10 +659,12 @@ void onXmitDone(radio_tx_done_t x)
   Serial.print((uint8_t)x, 10);
   if(x==TX_NO_ACK){
     Serial.print(" NO ACK ");
-  }else if(x==TX_OK){
+  }
+  else if(x==TX_OK){
     Serial.print("(OK)");
     retry_c = TX_TRY_TIMES;
-  }else if(x==TX_CCA_FAIL){ // not implemented
+  }
+  else if(x==TX_CCA_FAIL){ // not implemented
     Serial.print("(CS busy)");
   }
   Serial.println();
@@ -612,8 +677,10 @@ unsigned long calcWaitingTime() {
 uint16_t sum_two(uint16_t a, uint16_t b){
   uint32_t sum = (uint32_t)a + (uint32_t)b;
   uint32_t carry = sum>>16;
-if(carry == 0x01){	// case that there's carry bit
-sum = sum_two(sum,carry);
-}
+  if(carry == 0x01){	// case that there's carry bit
+    sum = sum_two(sum,carry);
+  }
   return (uint16_t) sum & 0xffff;
 }
+
+
