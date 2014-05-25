@@ -382,7 +382,7 @@ void radio_set_param(radio_attribute_t attr, radio_param_t parm)
 void radio_send_frame(uint8_t len, uint8_t *frm, uint8_t compcrc)
 {
     trx_frame_write(len, frm);
-    frm[2] = frm[2]+1;
+//    frm[2] = frm[2]+1;
     TRX_SLPTR_HIGH();
     TRX_SLPTR_LOW();
 }
