@@ -346,7 +346,7 @@ uint8_t pkt_Tx(uint16_t dst_addr, char* msg, uint8_t seqNum, uint8_t pktType, ui
                Serial.print("]: ");
                Serial.println(TxBuffer[i], HEX);
             }
-            delay(999999);
+            //delay(999999);
         }else{
           Serial.print("ca fail with rssi = ");
           Serial.println(rssi);
